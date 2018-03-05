@@ -34,8 +34,8 @@ module Audited
   end
 
   class Audit < ::ActiveRecord::Base
-    belongs_to :auditable,  polymorphic: true
-    belongs_to :user,       polymorphic: true
+    belongs_to :auditable, polymorphic: true
+    belongs_to :user, polymorphic: true
     belongs_to :associated, polymorphic: true
 
     before_create :set_version_number, :set_audit_user, :set_request_uuid, :set_remote_address
@@ -45,19 +45,29 @@ module Audited
 
     serialize :audited_changes, YAMLIfTextColumnType
 
-    scope :ascending,     ->{ reorder(version: :asc) }
-    scope :descending,    ->{ reorder(version: :desc)}
-    scope :creates,       ->{ where(action: 'create')}
-    scope :updates,       ->{ where(action: 'update')}
-    scope :destroys,      ->{ where(action: 'destroy')}
+    scope :ascending, -> {reorder(version: :asc)}
+    scope :descending, -> {reorder(version: :desc)}
+    scope :creates, -> {where(action: 'create')}
+    scope :updates, -> {where(action: 'update')}
+    scope :destroys, -> {where(action: 'destroy')}
 
-    scope :up_until,      ->(date_or_time){ where("created_at <= ?", date_or_time) }
-    scope :from_version,  ->(version){ where('version >= ?', version) }
-    scope :to_version,    ->(version){ where('version <= ?', version) }
-    scope :auditable_finder, ->(auditable_id, auditable_type){ where(auditable_id: auditable_id, auditable_type: auditable_type)}
+    scope :down_until, ->(date_or_time) {where("created_at > ?", date_or_time)}
+    scope :up_until, ->(date_or_time) {where("created_at <= ?", date_or_time)}
+    scope :from_version, ->(version) {where('version >= ?', version)}
+    scope :to_version, ->(version) {where('version <= ?', version)}
+    scope :auditable_finder, ->(auditable_id, auditable_type) {where(auditable_id: auditable_id, auditable_type: auditable_type)}
     # Return all audits older than the current one.
-    def ancestors
-      self.class.ascending.auditable_finder(auditable_id, auditable_type).to_version(version)
+    def descendents
+      self.class.descending.auditable_finder(auditable_id, auditable_type).from_version(
+          case action
+            when 'create' then
+              version
+            when 'destroy' then
+              version
+            else
+              version + 1
+          end
+      )
     end
 
     # Return an instance of what the object looked like at this revision. If
@@ -65,7 +75,7 @@ module Audited
     def revision
       clazz = auditable_type.constantize
       (clazz.find_by_id(auditable_id) || clazz.new).tap do |m|
-        self.class.assign_revision_attributes(m, self.class.reconstruct_attributes(ancestors).merge(version: version))
+        self.class.assign_revision_attributes(m, self.class.reconstruct_attributes(descendents).merge(version: version))
       end
     end
 
@@ -80,7 +90,7 @@ module Audited
     # Returns a hash of the changed attributes with the old values
     def old_attributes
       (audited_changes || {}).inject({}.with_indifferent_access) do |attrs, (attr, values)|
-        attrs[attr] = Array(values).first
+        attrs[attr] = values.is_a?(Array) ? values.first : values
 
         attrs
       end
@@ -111,9 +121,10 @@ module Audited
       # reset both either way
       self.user_as_model = self.username = nil
       user.is_a?(::ActiveRecord::Base) ?
-        self.user_as_model = user :
-        self.username = user
+          self.user_as_model = user :
+          self.username = user
     end
+
     alias_method :user_as_model=, :user=
     alias_method :user=, :user_as_string=
 
@@ -121,6 +132,7 @@ module Audited
     def user_as_string
       user_as_model || username
     end
+
     alias_method :user_as_model, :user
     alias_method :user, :user_as_string
 
@@ -143,7 +155,7 @@ module Audited
     def self.reconstruct_attributes(audits)
       attributes = {}
       result = audits.collect do |audit|
-        attributes.merge!(audit.new_attributes)[:version] = audit.version
+        attributes.merge!(audit.old_attributes)[:version] = audit.version - (audit.action.in?(%w[create destroy]) ? 0 : 1)
         yield attributes if block_given?
       end
       block_given? ? result : attributes
@@ -156,8 +168,8 @@ module Audited
 
         if record.respond_to?("#{attr}=")
           record.attributes.key?(attr.to_s) ?
-            record[attr] = val :
-            record.send("#{attr}=", val)
+              record[attr] = val :
+              record.send("#{attr}=", val)
         end
       end
       record
