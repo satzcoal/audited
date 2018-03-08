@@ -58,16 +58,7 @@ module Audited
     scope :auditable_finder, ->(auditable_id, auditable_type) {where(auditable_id: auditable_id, auditable_type: auditable_type)}
     # Return all audits older than the current one.
     def descendents
-      self.class.descending.auditable_finder(auditable_id, auditable_type).from_version(
-          case action
-            when 'create' then
-              version
-            when 'destroy' then
-              version
-            else
-              version + 1
-          end
-      )
+      self.class.descending.auditable_finder(auditable_id, auditable_type).from_version(version)
     end
 
     # Return an instance of what the object looked like at this revision. If
