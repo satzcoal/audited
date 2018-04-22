@@ -212,6 +212,7 @@ module Audited
       end
 
       def write_audit(attrs)
+        binding.pry
         attrs[:associated] = send(audit_associated_with) unless audit_associated_with.nil?
         self.audit_comment = nil
         run_callbacks(:audit) {audits.create(attrs)} if auditing_enabled
