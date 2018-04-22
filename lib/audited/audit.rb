@@ -38,6 +38,10 @@ module Audited
     belongs_to :user, polymorphic: true
     belongs_to :associated, polymorphic: true
 
+    def auditable_type=(sType)
+      super(sType.to_s.classify.constantize.base_class.to_s)
+    end
+
     before_create :set_version_number, :set_audit_user, :set_request_uuid, :set_remote_address
 
     cattr_accessor :audited_class_names
